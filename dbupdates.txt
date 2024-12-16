@@ -1,0 +1,232 @@
+Insert into EventTypes(Name,Description,IsActive,OpType,OpStatus)
+					values ('MISSEDINDENT','Event for Missed Indent for Specific Day',1,'INDENT','MISSED')
+
+CREATE PROCEDURE [dbo].[SP_MissedIndentNotify]  
+		@orgid INT    
+	AS  
+	BEGIN  
+		SET NOCOUNT ON;  
+		DECLARE @Notify bit
+		SELECT @Notify = SendMissedIndentNotification From PurchaseSettings where OrgId = @orgid
+		IF @Notify = 1
+		BEGIN
+			DECLARE @PrevIndentDate DateTime
+			DECLARE @PrevIndentDay varchar(20)
+			SELECT @PrevIndentDay = IndentDay from PurchaseSettings Where OrgId = @orgid
+			PRINT @PrevIndentDay
+			SELECT @PrevIndentDate = 
+				CASE WHEN @PrevIndentDay = 1 THEN
+					DATEADD(DAY, - (DATEPART(WEEKDAY, GETDATE()) - 1) % 7, GETDATE()) 
+					WHEN @PrevIndentDay = 2 THEN
+					DATEADD(DAY, - (DATEPART(WEEKDAY, GETDATE()) + 5) % 7, GETDATE())
+					WHEN @PrevIndentDay = 3 THEN
+					DATEADD(DAY, - (DATEPART(WEEKDAY, GETDATE()) + 4) % 7, GETDATE())
+					WHEN @PrevIndentDay = 4 THEN
+					DATEADD(DAY, - (DATEPART(WEEKDAY, GETDATE()) + 3) % 7, GETDATE())
+					WHEN @PrevIndentDay = 5 THEN
+					DATEADD(DAY, - (DATEPART(WEEKDAY, GETDATE()) + 2) % 7, GETDATE())
+					WHEN @PrevIndentDay = 6 THEN
+					DATEADD(DAY, - (DATEPART(WEEKDAY, GETDATE()) + 1) % 7, GETDATE())
+					WHEN @PrevIndentDay = 7 THEN
+					DATEADD(DAY, - (DATEPART(WEEKDAY, GETDATE()) + 0) % 7, GETDATE())
+					END
+			PRINT @PrevIndentDate
+			DECLARE @StoreId int
+			-- 1. Declare the cursor and define the SQL statement.
+			DECLARE store_cursor CURSOR FOR
+			SELECT Id From Stores Where OrgId = @orgid and IsMainStore =0;
+			
+			-- 2. Open the cursor.
+			OPEN store_cursor;
+
+			-- 3. Fetch the first row.
+			FETCH NEXT FROM store_cursor INTO @StoreId;
+
+			-- 4. Loop through the rows.
+			WHILE @@FETCH_STATUS = 0
+			BEGIN
+				IF NOT  EXISTS(Select * from StockIndent Where IndentDt = @PrevIndentDate and StoreId = @StoreId)
+				BEGIN
+					DECLARE @EventId int
+					SELECT @EventId = Id from EventTypes where OpType = 'INDENT' and OpStatus = 'MISSED'
+					IF (ISNULL(@EventId,0) > 0)
+					BEGIN
+						DECLARE @RefDate datetime
+						DECLARE @UserId int
+						SELECT @UserId=Id from Users Where RoleId = 2 -- Admin UserId
+						EXEC [dbo].[SP_EventNotification]  @OrgId,@UserId,@StoreId,'',@PrevIndentDate,@EventId
+					END
+				END
+			 -- Fetch the next row.
+				FETCH NEXT FROM store_cursor INTO @StoreId;
+			END
+
+			-- 5. Close and deallocate the cursor.
+			CLOSE store_cursor;
+			DEALLOCATE store_cursor;
+		END
+	END
+	GO
+
+    CREATE TABLE PurchaseSettings (
+        Id INT PRIMARY KEY IDENTITY(1,1),
+        OrgId INT NOT NULL,
+        StoreId INT NULL,
+        IsIndentDayBased bit NULL Default(0),
+        IndentDay VARCHAR(255), 
+        SendMissedIndentNotification BIT,
+        AutoApproveIndentsMinValue DECIMAL(18, 2), 
+        AutoApproveIndentsMaxValue DECIMAL(18, 2),
+        AutoApproveIndents BIT,
+        AutoSendPO BIT,
+        AutoSendPOMinAmount DECIMAL(18, 2), 
+        AutoSendPOMaxAmount DECIMAL(18, 2)
+    );
+Alter table PurchaseSettings
+Add  bit NULL default(0)
+
+Insert into NotificationTemplate(OrgId,Event,EmailBody,WhatsAppBody,Subject,HasAttachment,CreatedBy,CreatedOn,IsActive,EventId,params,RefUrl)
+	values (41115,'Missed Indent','Dear #RECIPIENT#,   We would like to inform you that you missed raising an Indent that was due on [#REFDATE#].If you have any questions, please reach out to procurement Manager.       Thank you!      Best Regards,     #FROMNAME#   #ORGNAME#',
+	'Dear #RECIPIENT#,   You Missed your Indent Window, that is due on [#REFDATE#]. Thank you!       Best Regards #ORGNAME#','Missed Indent Notification',0,1,Getdate(),1,12,NULL,NULL)
+
+
+Insert into RoleEventNotification(OrgId,EventId,NotifyRoleId,RecipientType,IsActive,NotifyGroup)
+	Values (41115,12,3,1,1,'TOSTORE')
+	Insert into RoleEventNotification(OrgId,EventId,NotifyRoleId,RecipientType,IsActive,NotifyGroup)
+	Values (41115,12,1,2,1,'TOSTORE')
+--9th Oct 2024 
+INSERT INTO dbo.ScreenOperations(Id, TableName, OpText, SQLQuery, IsActive)
+VALUES
+
+(125, 'NotifyMessages', 'GETNOTIFY', 
+'select NM.*
+from [dbo].[NotifyMessages] NM 
+INNER JOIN   UserStores US ON US.StoreId = NM.StoreId
+where UserId = @UserId AND NM.IsActive = 1 AND NM.OrgId = @OrgId', 1),
+
+(126, 'PurchaseSettings', 'GETPURSET', 
+'SELECT
+CASE  
+WHEN IsIndentDayBased = 0 THEN ''Yes''   
+WHEN CHARINDEX(CAST(DATEPART(dw, GETDATE()) AS VARCHAR), IndentDay) > 0 THEN ''Yes''
+ELSE ''No''  
+END AS IsIndentDayToday  FROM PurchaseSettings  WHERE OrgId = @OrgId', 1)
+
+-- Oct 15 2024 from Venkatesh
+
+Update dbo.rolemenu set [Read] = 0 where RoleId = 3 and AppmenuId = 9
+ 
+Update dbo.rolemenu set [Read] = 0 where  RoleId = 3 and Appmenuid = 11
+
+Update dbo.rolemenu set [read] = 0  where  RoleId = 3 and Appmenuid = 12
+
+Update dbo.rolemenu set [read] = 0  where  RoleId = 3 and Appmenuid = 18
+
+Insert into dbo.appmenu (Id,MenuName,MenuPath,IsParent,ParentId,MenuLevel,SortOrder,ReportId,IsActive,CreatedBy)
+Values (72,'Suppier Pending Payments','supplier-payments',0,1,2,30,0,1,1)
+
+Insert Into dbo.rolemenu (OrgId,RoleId, AppmenuId,[Read],Write,[Delete],Export,Isactive,CreatedBy)
+Values (31113,2,72,1,1,1,1,1,1)
+
+Insert Into dbo.rolemenu (OrgId,RoleId, AppmenuId,[Read],Write,[Delete],Export,Isactive,CreatedBy)
+Values (31113,1,72,1,1,1,1,1,1)
+
+Insert into dbo.appmenu (Id,MenuName,MenuPath,IsParent,ParentId,MenuLevel,SortOrder,ReportId,IsActive,CreatedBy)
+Values (65,'Local Purchase Indents','localindent-list',0,64,2,3,0,1,1)
+Insert Into dbo.rolemenu (OrgId,RoleId, AppmenuId,[Read],Write,[Delete],Export,Isactive,CreatedBy)
+Values (31113,2,65,1,1,1,1,1,1)
+
+Insert Into dbo.rolemenu (OrgId,RoleId, AppmenuId,[Read],Write,[Delete],Export,Isactive,CreatedBy)
+Values (31113,1,65,1,1,1,1,1,1)
+
+Insert Into dbo.rolemenu (OrgId,RoleId, AppmenuId,[Read],Write,[Delete],Export,Isactive,CreatedBy)
+Values (31113,3,65,1,1,1,1,1,1)
+---
+
+INSERT [dbo].[ScreenOperations] ([Id], [TableName], [OpText], [SQLQuery], [IsActive]) VALUES (127, N'PurchaseTransaction', N'SUPPAYPEND', N'
+  select SUM(InvoiceAmount) AS InvoiceAmt, SUM(PaidAmount) AS PaidAmt,PT.SupplierId,  SupplierName, PhoneNo, City 
+  from dbo.PurchaseTransaction PT INNER JOIN   dbo.Supplier SU ON SU.Id = PT.SupplierId    
+  where PT.OrgId = @OrgId  AND PT.ISACtive = 1 AND  PT.InvoiceStatus IN (''PARTIALLYPAID'', ''PENDING'') 
+  AND PT.POStatus IN (''ORDER'', ''RECEIVED'',''INVOICE'')   
+  GROUP by SupplierId, SupplierName, PhoneNo, City ', 1)
+GO
+INSERT [dbo].[ScreenOperations] ([Id], [TableName], [OpText], [SQLQuery], [IsActive]) VALUES (128, N'V_Purchases', N'SUPPAYVIEW', N'
+select PT.InvoiceAmount, PT.PaidAmount, PT.SupplierId, PT.id As PurchaseId, PT.AutoGenTransactionNo, PT.DiscountAmount, PT.PODate, PT.InvoiceStatus
+from dbo.PurchaseTransaction PT 
+INNER JOIN   dbo.Supplier SU ON SU.Id = PT.SupplierId 
+where PT.OrgId = @OrgId   AND PT.ISACtive = 1 AND PT.SupplierId = @SupplierId AND
+PT.InvoiceStatus IN (''PARTIALLYPAID'', ''PENDING'', ''PAID'') ', 1)
+GO
+INSERT [dbo].[ScreenOperations] ([Id], [TableName], [OpText], [SQLQuery], [IsActive]) VALUES (130, N'Purchase Transaction', N'GETSUPPOS', N'
+SELECT * FROM dbo.purchasetransaction WHERE POStatus IN (''INVOICE'', ''ORDER'', ''RECEIVED'') AND OrgId = @OrgId AND SupplierId = @SupplierId AND InvoiceAmount IS NOT NULL;
+
+', 1)
+GO
+INSERT [dbo].[ScreenOperations] ([Id], [TableName], [OpText], [SQLQuery], [IsActive]) VALUES (131, N'POPayments', N'GETSUPPAYS', N'
+SELECT
+    pp.POID,
+    pt.AutoGenTransactionNo,
+	pt.PODate,
+    MAX(pp.CardNo) AS CardNo,
+    MAX(pp.MobileNo) AS MobileNo,
+    SUM(pp.PaidAmount) AS TotalPaidAmount,
+	SUM(pt.InvoiceAmount) AS TotalAmount,
+    MAX(pt2.Name) AS PaymentTypeName
+FROM dbo.popayments pp
+JOIN dbo.purchasetransaction pt ON pp.POID = pt.ID
+JOIN dbo.PaymentTypes pt2 ON pp.PaymentTypeId = pt2.ID
+WHERE
+    pt.OrgId = @OrgId
+    AND pt.SupplierId = @SupplierId
+    AND pt.IsActive = 1
+GROUP BY
+    pp.POID,
+	pt.PODate,
+    pt.AutoGenTransactionNo;', 1)
+GO
+INSERT [dbo].[ScreenOperations] ([Id], [TableName], [OpText], [SQLQuery], [IsActive]) VALUES (132, N'POPayments', N'SUPPAYSVIEW', N'
+SELECT 
+    pp.*, 
+    pt.Name AS PaymentTypeName
+FROM 
+    dbo.POPayments pp
+JOIN 
+    dbo.PaymentTypes pt ON pp.PaymentTypeId = pt.ID
+WHERE 
+    pp.POId = @POID
+    AND pp.IsActive = 1;', 1)
+GO
+
+------
+CREATE View [dbo].[V_StockIndentByUser]  
+AS  
+SELECT SI.Id,SI.OrgId,SI.StoreId,SI.IndentNo, SI.IndentDt,SI.ProductId,SI.ReqQty,SI.CurrentStock,SI.IndentStatus,SI.IsActive, SI.Approvedqty  
+, STOR.Name as StoreName,PR.Name as ProductName,STOR.City AS City, US.UserId, 
+CASE         
+        WHEN SI.IndentStatus = 1 THEN 'DRAFT'       
+        WHEN SI.IndentStatus = 2 THEN 'SUBMITTED'     
+        WHEN SI.IndentStatus = 3 THEN 'APPROVED'    
+        WHEN SI.IndentStatus = 4 THEN 'REJECTED'   
+        WHEN SI.IndentStatus = 5 THEN 'CLOSED'    
+  WHEN SI.IndentStatus = 11 THEN 'LOCALPURCHASEDRAFT'       
+        WHEN SI.IndentStatus = 12 THEN 'LOCALPURCHASESENT'     
+        WHEN SI.IndentStatus = 13 THEN 'LOCALPURCHASEAPPROVE'    
+        WHEN SI.IndentStatus = 14 THEN 'LOCALPURCHASEREJECT'   
+        WHEN SI.IndentStatus = 15 THEN 'LOCALPURCHASECLOSED'    
+        ELSE 'UNKNOWN'   
+    END AS Status  
+from dbo.StockIndent SI 
+INNER JOIN Stores STOR ON SI.StoreId = STOR.Id 
+INNER JOIN Products PR ON SI.ProductId = PR.Id  AND SI.OrgId = PR.OrgId  
+INNER JOIN dbo.UserStores US ON US.StoreId = SI.StoreId AND US.OrgId = SI.OrgId
+
+
+QUERY BEFORE RUNNING BELOW Update---- 16/10/2024
+Select Max(IndentNo) as RequestNo,ProductName,Sum(ReqQty) as Qty From dbo.V_StockIndent
+ AND IndentDt between #[FromDate]# and #[ToDate]# and (ProductId = #[ProductId]# OR #[ProductId]# = 0)
+----
+Update dbo.Appreports SET SelectQuery =
+'Select Max(IndentNo) as RequestNo,ProductName,Sum(ReqQty) as Qty From dbo.V_StockIndentByUser',
+WhereCondition = 'AND IndentDt between #[FromDate]# and #[ToDate]# and (ProductId = #[ProductId]# OR #[ProductId]# = 0)
+AND UserId = #[LoginUserId]#'
+where Id = 501
